@@ -97,4 +97,16 @@
         android:layout_width="match_parent"
 		android:layout_height="wrap_content"
 		android:max="100"/>
+    
+    <EditText android:id="@+id/password"
+        android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:hint="Password"
+        />
+        <EditText android:id="@+id/salt"
+        android:layout_width="match_parent"
+		android:layout_height="wrap_content"
+		android:hint="Salt"
+        />
+    
 </LinearLayout>

@@ -34,7 +34,9 @@ import javax.crypto.SecretKeyFactory;
 import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 
+import protect.babymonitor.PromptDialog.PromptDialogListener;
 import android.app.Activity;
+import android.app.FragmentManager;
 import android.content.Context;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
@@ -52,12 +54,14 @@ import android.widget.SeekBar;
 import android.widget.SeekBar.OnSeekBarChangeListener;
 import android.widget.TextView;
 
-public class MonitorActivity extends Activity {
+public class MonitorActivity extends Activity implements PromptDialogListener{
 	final String TAG = "BabyMonitor";
 	private short threshold = 1000; //this threshold should be adjustable at the parent device
 	private int thresholdMax = 10000;
 	private int heartbeatTimeout = 10000;
 	private long lastHeartBeat = 0;
+	String password = "";
+	String salt = "salt";
 	
 	NsdManager _nsdManager;
 
@@ -95,10 +99,9 @@ public class MonitorActivity extends Activity {
 			
 			   final OutputStream out = socket.getOutputStream();
 
-
 	            /* Derive the key, given password and salt. */
 	            SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA1And8bit");
-	            KeySpec spec = new PBEKeySpec("password".toCharArray(), "salt".getBytes(), 65536, 256);
+	            KeySpec spec = new PBEKeySpec(password.toCharArray(), salt.getBytes(), 65536, 256);
 	            SecretKey tmp = factory.generateSecret(spec);
 	            SecretKey secret = new SecretKeySpec(tmp.getEncoded(), "AES");
 	/* Encrypt the message. */
@@ -218,77 +221,13 @@ public class MonitorActivity extends Activity {
 					Log.d(TAG, "Threshold: "+threshold);
 			}
 		});
-
-		_serviceThread = new Thread(new Runnable() {
-			@Override
-			public void run() {
-				while (Thread.currentThread().isInterrupted() == false) {
-					ServerSocket serverSocket = null;
-
-					try {
-						// Initialize a server socket on the next available
-						// port.
-						serverSocket = new ServerSocket(0);
-
-						// Store the chosen port.
-						final int localPort = serverSocket.getLocalPort();
-
-						// Register the service so that parent devices can
-						// locate the child device
-						registerService(localPort);
-
-						// Wait for a parent to find us and connect
-						Socket socket = serverSocket.accept();
-						Log.i(TAG, "Connection from parent device received");
-
-						// We now have a client connection.
-						// Unregister so no other clients will
-						// attempt to connect
-						serverSocket.close();
-						serverSocket = null;
-						unregisterService();
-
-						try {
-							serviceConnection(socket);
-						} finally {
-							socket.close();
-						}
-					} catch (IOException e) {
-						Log.e(TAG, "Connection failed", e);
-					}
-
-					// If an exception was thrown before the connection
-					// could be closed, clean it up
-					if (serverSocket != null) {
-						try {
-							serverSocket.close();
-						} catch (IOException e) {
-							Log.e(TAG, "Failed to close stray connection", e);
-						}
-						serverSocket = null;
-					}
-				}
-			}
-		});
-		_serviceThread.start();
-
-		MonitorActivity.this.runOnUiThread(new Runnable() {
-			@Override
-			public void run() {
-				final TextView addressText = (TextView) findViewById(R.id.address);
-
-				final WifiManager wifiManager = (WifiManager) getSystemService(WIFI_SERVICE);
-				final WifiInfo info = wifiManager.getConnectionInfo();
-				final int address = info.getIpAddress();
-				if (address != 0) {
-					@SuppressWarnings("deprecation")
-					final String ipAddress = Formatter.formatIpAddress(address);
-					addressText.setText(ipAddress);
-				} else {
-					addressText.setText(R.string.wifiNotConnected);
-				}
-			}
-		});
+		
+		FragmentManager fm = getFragmentManager();
+		PromptDialog dialogFragment = new PromptDialog ();
+		dialogFragment.setPromptDialogListener(this);
+		dialogFragment.show(fm, "Sample Fragment");
+		
+		
 	}
 
 	@Override
@@ -398,5 +337,81 @@ public class MonitorActivity extends Activity {
 			_nsdManager.unregisterService(_registrationListener);
 			_registrationListener = null;
 		}
+	}
+
+	@Override
+	public void onFinishPromptDialog(String inputText) {
+		password = inputText;
+		
+		_serviceThread = new Thread(new Runnable() {
+			@Override
+			public void run() {
+				while (Thread.currentThread().isInterrupted() == false) {
+					ServerSocket serverSocket = null;
+
+					try {
+						// Initialize a server socket on the next available
+						// port.
+						serverSocket = new ServerSocket(0);
+
+						// Store the chosen port.
+						final int localPort = serverSocket.getLocalPort();
+
+						// Register the service so that parent devices can
+						// locate the child device
+						registerService(localPort);
+
+						// Wait for a parent to find us and connect
+						Socket socket = serverSocket.accept();
+						Log.i(TAG, "Connection from parent device received");
+
+						// We now have a client connection.
+						// Unregister so no other clients will
+						// attempt to connect
+						serverSocket.close();
+						serverSocket = null;
+						unregisterService();
+
+						try {
+							serviceConnection(socket);
+						} finally {
+							socket.close();
+						}
+					} catch (IOException e) {
+						Log.e(TAG, "Connection failed", e);
+					}
+
+					// If an exception was thrown before the connection
+					// could be closed, clean it up
+					if (serverSocket != null) {
+						try {
+							serverSocket.close();
+						} catch (IOException e) {
+							Log.e(TAG, "Failed to close stray connection", e);
+						}
+						serverSocket = null;
+					}
+				}
+			}
+		});
+		_serviceThread.start();
+
+		MonitorActivity.this.runOnUiThread(new Runnable() {
+			@Override
+			public void run() {
+				final TextView addressText = (TextView) findViewById(R.id.address);
+
+				final WifiManager wifiManager = (WifiManager) getSystemService(WIFI_SERVICE);
+				final WifiInfo info = wifiManager.getConnectionInfo();
+				final int address = info.getIpAddress();
+				if (address != 0) {
+					@SuppressWarnings("deprecation")
+					final String ipAddress = Formatter.formatIpAddress(address);
+					addressText.setText(ipAddress);
+				} else {
+					addressText.setText(R.string.wifiNotConnected);
+				}
+			}
+		});
 	}
 }
