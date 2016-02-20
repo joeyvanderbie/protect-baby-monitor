@@ -19,6 +19,7 @@ package protect.babymonitor;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.Socket;
+import java.net.SocketException;
 import java.net.UnknownHostException;
 
 import android.app.Activity;
@@ -37,6 +38,7 @@ public class ListenActivity extends Activity
     String _address;
     int _port;
     String _name;
+    int timeOutTime = 10000; //in millis
 
     Thread _listenThread;
     private void streamAudio(final Socket socket) throws IllegalArgumentException, IllegalStateException, IOException
@@ -58,7 +60,12 @@ public class ListenActivity extends Activity
 
         setVolumeControlStream(AudioManager.STREAM_MUSIC);
 
+        
+
+        socket.setSoTimeout(timeOutTime);
+        socket.setKeepAlive(true);
         final InputStream is = socket.getInputStream();
+        
         int read = 0;
 
         audioTrack.play();
@@ -69,13 +76,19 @@ public class ListenActivity extends Activity
 
             while(socket.isConnected() && read != -1 && Thread.currentThread().isInterrupted() == false)
             {
-                read = is.read(buffer);
-
+            	read = is.read(buffer);
+            	
                 if(read > 0)
                 {
                     audioTrack.write(buffer, 0, read);
                 }
             }
+        }catch (SocketException ste)
+        {
+        	//connection timeout
+        	//To-do: ping remote
+        	//otherwise throw exception
+        	throw ste;
         }
         finally
         {

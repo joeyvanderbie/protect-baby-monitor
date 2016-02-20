@@ -35,274 +35,325 @@ import android.text.format.Formatter;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.widget.SeekBar;
+import android.widget.SeekBar.OnSeekBarChangeListener;
 import android.widget.TextView;
 
-public class MonitorActivity extends Activity
-{
-    final String TAG = "BabyMonitor";
+public class MonitorActivity extends Activity {
+	final String TAG = "BabyMonitor";
+	private short threshold = 1000; //this threshold should be adjustable at the parent device
+	private int thresholdMax = 10000;
+	private int heartbeatTimeout = 10000;
+	private long lastHeartBeat = 0;
+	
+	NsdManager _nsdManager;
 
-    NsdManager _nsdManager;
+	NsdManager.RegistrationListener _registrationListener;
 
-    NsdManager.RegistrationListener _registrationListener;
+	Thread _serviceThread;
 
-    Thread _serviceThread;
+	private void serviceConnection(Socket socket) throws IOException {
+		MonitorActivity.this.runOnUiThread(new Runnable() {
+			@Override
+			public void run() {
+				final TextView statusText = (TextView) findViewById(R.id.textStatus);
+				statusText.setText(R.string.streaming);
+			}
+		});
 
-    private void serviceConnection(Socket socket) throws IOException
-    {
-        MonitorActivity.this.runOnUiThread(new Runnable()
-        {
-            @Override
-            public void run()
-            {
-                final TextView statusText = (TextView) findViewById(R.id.textStatus);
-                statusText.setText(R.string.streaming);
-            }
-        });
+		final int frequency = 11025;
+		final int channelConfiguration = AudioFormat.CHANNEL_IN_MONO;
+		final int audioEncoding = AudioFormat.ENCODING_PCM_16BIT;
 
-        final int frequency = 11025;
-        final int channelConfiguration = AudioFormat.CHANNEL_IN_MONO;
-        final int audioEncoding = AudioFormat.ENCODING_PCM_16BIT;
+		final int bufferSize = AudioRecord.getMinBufferSize(frequency,
+				channelConfiguration, audioEncoding);
+		final AudioRecord audioRecord = new AudioRecord(
+				MediaRecorder.AudioSource.MIC, frequency, channelConfiguration,
+				audioEncoding, bufferSize);
 
-        final int bufferSize = AudioRecord.getMinBufferSize(frequency, channelConfiguration, audioEncoding);
-        final AudioRecord audioRecord = new AudioRecord(MediaRecorder.AudioSource.MIC,
-                frequency, channelConfiguration,
-                audioEncoding, bufferSize);
+		final int byteBufferSize = bufferSize * 2;
+		final byte[] buffer = new byte[byteBufferSize];
+		final short[] buffer2 = new short[bufferSize];
 
-        final int byteBufferSize = bufferSize*2;
-        final byte[] buffer = new byte[byteBufferSize];
+		try {
+			audioRecord.startRecording();
 
-        try
-        {
-            audioRecord.startRecording();
+//			socket.setKeepAlive(true);
+			final OutputStream out = socket.getOutputStream();
 
-            final OutputStream out = socket.getOutputStream();
+			socket.setSendBufferSize(byteBufferSize);
+			Log.d(TAG, "Socket send buffer size: " + socket.getSendBufferSize());
 
-            socket.setSendBufferSize(byteBufferSize);
-            Log.d(TAG, "Socket send buffer size: " + socket.getSendBufferSize());
+			while (socket.isConnected()
+					&& Thread.currentThread().isInterrupted() == false) {
+				final int read = audioRecord.read(buffer2, 0, bufferSize);
 
-            while (socket.isConnected() && Thread.currentThread().isInterrupted() == false)
-            {
-                final int read = audioRecord.read(buffer, 0, bufferSize);
-                out.write(buffer, 0, read);
-            }
-        }
-        finally
-        {
-            audioRecord.stop();
-        }
-    }
+				int foundPeak = searchThreshold(buffer2, threshold);
+				if (foundPeak > -1) { // found signal
+					lastHeartBeat = System.currentTimeMillis();
+										// record signal
+					//create a timeout in the searchTrheshold check.
+					try {
+						 byte[] byteBuffer =ShortToByte(buffer2,read);
+						 out.write(byteBuffer);
+//						out.write(buffer, 0, read);
+					} catch (IOException e) {
+						e.printStackTrace();
+					}
+				} else {// count the time
+						// don't save signal
+					if(lastHeartBeat + heartbeatTimeout - 1000 < System.currentTimeMillis()) {
+						//send heartbeat
+						lastHeartBeat = System.currentTimeMillis();
+						out.write("beat".getBytes());
+					}
+				}
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState)
-    {
-        Log.i(TAG, "Baby monitor start");
+			}
+		} finally {
+			audioRecord.stop();
+		}
+	}
 
-        _nsdManager = (NsdManager)this.getSystemService(Context.NSD_SERVICE);
+	// provided by
+	// http://stackoverflow.com/questions/19145213/android-audio-capture-silence-detection
+	  byte [] ShortToByte(short [] input, int elements) {
+	      int short_index, byte_index;
+	      int iterations = elements; //input.length;
+	      byte [] buffer = new byte[iterations * 2];
 
-        super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_monitor);
+	      short_index = byte_index = 0;
 
-        _serviceThread = new Thread(new Runnable()
-        {
-            @Override
-            public void run()
-            {
-                while(Thread.currentThread().isInterrupted() == false)
-                {
-                    ServerSocket serverSocket = null;
+	      for(/*NOP*/; short_index != iterations; /*NOP*/)
+	      {
+	        buffer[byte_index]     = (byte) (input[short_index] & 0x00FF); 
+	        buffer[byte_index + 1] = (byte) ((input[short_index] & 0xFF00) >> 8);
 
-                    try
-                    {
-                        // Initialize a server socket on the next available port.
-                        serverSocket = new ServerSocket(0);
+	        ++short_index; byte_index += 2;
+	      }
 
-                        // Store the chosen port.
-                        final int localPort = serverSocket.getLocalPort();
+	      return buffer;
+	    }
+	
+	private int searchThreshold(short[] arr, short thr) {
+		int peakIndex;
+		int arrLen = arr.length;
+		for (peakIndex = 0; peakIndex < arrLen; peakIndex++) {
+			if ((arr[peakIndex] >= thr) || (arr[peakIndex] <= -thr)) {
+				Log.d(TAG, "peak "+peakIndex +" value "+arr[peakIndex]);
+				
+				return peakIndex;
+			}
+		}
+		return -1; // not found
+	}
 
-                        // Register the service so that parent devices can
-                        // locate the child device
-                        registerService(localPort);
+	@Override
+	protected void onCreate(Bundle savedInstanceState) {
+		Log.i(TAG, "Baby monitor start");
 
-                        // Wait for a parent to find us and connect
-                        Socket socket = serverSocket.accept();
-                        Log.i(TAG, "Connection from parent device received");
+		_nsdManager = (NsdManager) this.getSystemService(Context.NSD_SERVICE);
 
-                        // We now have a client connection.
-                        // Unregister so no other clients will
-                        // attempt to connect
-                        serverSocket.close();
-                        serverSocket = null;
-                        unregisterService();
+		super.onCreate(savedInstanceState);
+		setContentView(R.layout.activity_monitor);
+		
+		SeekBar volumeThreshold = (SeekBar) this.findViewById(R.id.volumeThreshold);
+		volumeThreshold.setOnSeekBarChangeListener(new OnSeekBarChangeListener() {
+			
+			@Override
+			public void onStopTrackingTouch(SeekBar seekBar) {
+			}
+			
+			@Override
+			public void onStartTrackingTouch(SeekBar seekBar) {
+			}
+			
+			@Override
+			public void onProgressChanged(SeekBar seekBar, int progress,
+					boolean fromUser) {
+					threshold = (short) (progress * 0.01 *  thresholdMax) ;
+					Log.d(TAG, "Threshold: "+threshold);
+			}
+		});
 
-                        try
-                        {
-                            serviceConnection(socket);
-                        }
-                        finally
-                        {
-                            socket.close();
-                        }
-                    }
-                    catch(IOException e)
-                    {
-                        Log.e(TAG, "Connection failed", e);
-                    }
+		_serviceThread = new Thread(new Runnable() {
+			@Override
+			public void run() {
+				while (Thread.currentThread().isInterrupted() == false) {
+					ServerSocket serverSocket = null;
 
-                    // If an exception was thrown before the connection
-                    // could be closed, clean it up
-                    if(serverSocket != null)
-                    {
-                        try
-                        {
-                            serverSocket.close();
-                        }
-                        catch (IOException e)
-                        {
-                            Log.e(TAG, "Failed to close stray connection", e);
-                        }
-                        serverSocket = null;
-                    }
-                }
-            }
-        });
-        _serviceThread.start();
+					try {
+						// Initialize a server socket on the next available
+						// port.
+						serverSocket = new ServerSocket(0);
 
-        MonitorActivity.this.runOnUiThread(new Runnable()
-        {
-            @Override
-            public void run()
-            {
-                final TextView addressText = (TextView) findViewById(R.id.address);
+						// Store the chosen port.
+						final int localPort = serverSocket.getLocalPort();
 
-                final WifiManager wifiManager = (WifiManager) getSystemService(WIFI_SERVICE);
-                final WifiInfo info = wifiManager.getConnectionInfo();
-                final int address = info.getIpAddress();
-                if(address != 0)
-                {
-                    @SuppressWarnings("deprecation")
-                    final String ipAddress = Formatter.formatIpAddress(address);
-                    addressText.setText(ipAddress);
-                }
-                else
-                {
-                    addressText.setText(R.string.wifiNotConnected);
-                }
-            }
-        });
-    }
+						// Register the service so that parent devices can
+						// locate the child device
+						registerService(localPort);
 
-    @Override
-    protected void onDestroy()
-    {
-        Log.i(TAG, "Baby monitor stop");
+						// Wait for a parent to find us and connect
+						Socket socket = serverSocket.accept();
+						Log.i(TAG, "Connection from parent device received");
 
-        unregisterService();
+						// We now have a client connection.
+						// Unregister so no other clients will
+						// attempt to connect
+						serverSocket.close();
+						serverSocket = null;
+						unregisterService();
 
-        if(_serviceThread != null)
-        {
-            _serviceThread.interrupt();
-            _serviceThread = null;
-        }
+						try {
+							serviceConnection(socket);
+						} finally {
+							socket.close();
+						}
+					} catch (IOException e) {
+						Log.e(TAG, "Connection failed", e);
+					}
 
-        super.onDestroy();
-    }
+					// If an exception was thrown before the connection
+					// could be closed, clean it up
+					if (serverSocket != null) {
+						try {
+							serverSocket.close();
+						} catch (IOException e) {
+							Log.e(TAG, "Failed to close stray connection", e);
+						}
+						serverSocket = null;
+					}
+				}
+			}
+		});
+		_serviceThread.start();
 
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu)
-    {
-        // Inflate the menu; this adds items to the action bar if it is present.
-        getMenuInflater().inflate(R.menu.start, menu);
-        return true;
-    }
+		MonitorActivity.this.runOnUiThread(new Runnable() {
+			@Override
+			public void run() {
+				final TextView addressText = (TextView) findViewById(R.id.address);
 
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item)
-    {
-        // Handle action bar item clicks here. The action bar will
-        // automatically handle clicks on the Home/Up button, so long
-        // as you specify a parent activity in AndroidManifest.xml.
-        int id = item.getItemId();
-        if (id == R.id.action_settings) {
-            return true;
-        }
-        return super.onOptionsItemSelected(item);
-    }
+				final WifiManager wifiManager = (WifiManager) getSystemService(WIFI_SERVICE);
+				final WifiInfo info = wifiManager.getConnectionInfo();
+				final int address = info.getIpAddress();
+				if (address != 0) {
+					@SuppressWarnings("deprecation")
+					final String ipAddress = Formatter.formatIpAddress(address);
+					addressText.setText(ipAddress);
+				} else {
+					addressText.setText(R.string.wifiNotConnected);
+				}
+			}
+		});
+	}
 
-    private void registerService(final int port)
-    {
-        final NsdServiceInfo serviceInfo  = new NsdServiceInfo();
-        serviceInfo.setServiceName("ProtectBabyMonitor");
-        serviceInfo.setServiceType("_babymonitor._tcp.");
-        serviceInfo.setPort(port);
+	@Override
+	protected void onDestroy() {
+		Log.i(TAG, "Baby monitor stop");
 
-        _registrationListener = new NsdManager.RegistrationListener()
-        {
-            @Override
-            public void onServiceRegistered(NsdServiceInfo nsdServiceInfo) {
-                // Save the service name.  Android may have changed it in order to
-                // resolve a conflict, so update the name you initially requested
-                // with the name Android actually used.
-                final String serviceName = nsdServiceInfo.getServiceName();
+		unregisterService();
 
-                Log.i(TAG, "Service name: " + serviceName);
+		if (_serviceThread != null) {
+			_serviceThread.interrupt();
+			_serviceThread = null;
+		}
 
-                MonitorActivity.this.runOnUiThread(new Runnable() {
-                    @Override
-                    public void run()
-                    {
-                        final TextView statusText = (TextView) findViewById(R.id.textStatus);
-                        statusText.setText(R.string.waitingForParent);
+		super.onDestroy();
+	}
 
-                        final TextView serviceText = (TextView) findViewById(R.id.textService);
-                        serviceText.setText(serviceName);
+	@Override
+	public boolean onCreateOptionsMenu(Menu menu) {
+		// Inflate the menu; this adds items to the action bar if it is present.
+		getMenuInflater().inflate(R.menu.start, menu);
+		return true;
+	}
 
-                        final TextView portText = (TextView) findViewById(R.id.port);
-                        portText.setText(Integer.toString(port));
-                    }
-                });
-            }
+	@Override
+	public boolean onOptionsItemSelected(MenuItem item) {
+		// Handle action bar item clicks here. The action bar will
+		// automatically handle clicks on the Home/Up button, so long
+		// as you specify a parent activity in AndroidManifest.xml.
+		int id = item.getItemId();
+		if (id == R.id.action_settings) {
+			return true;
+		}
+		return super.onOptionsItemSelected(item);
+	}
 
-            @Override
-            public void onRegistrationFailed(NsdServiceInfo serviceInfo, int errorCode)
-            {
-                // Registration failed!  Put debugging code here to determine why.
-                Log.e(TAG, "Registration failed: " + errorCode);
-            }
+	private void registerService(final int port) {
+		final NsdServiceInfo serviceInfo = new NsdServiceInfo();
+		serviceInfo.setServiceName("ProtectBabyMonitor");
+		serviceInfo.setServiceType("_babymonitor._tcp.");
+		serviceInfo.setPort(port);
 
-            @Override
-            public void onServiceUnregistered(NsdServiceInfo arg0)
-            {
-                // Service has been unregistered.  This only happens when you call
-                // NsdManager.unregisterService() and pass in this listener.
+		_registrationListener = new NsdManager.RegistrationListener() {
+			@Override
+			public void onServiceRegistered(NsdServiceInfo nsdServiceInfo) {
+				// Save the service name. Android may have changed it in order
+				// to
+				// resolve a conflict, so update the name you initially
+				// requested
+				// with the name Android actually used.
+				final String serviceName = nsdServiceInfo.getServiceName();
 
-                Log.i(TAG, "Unregistering service");
-            }
+				Log.i(TAG, "Service name: " + serviceName);
 
-            @Override
-            public void onUnregistrationFailed(NsdServiceInfo serviceInfo, int errorCode)
-            {
-                // Unregistration failed.  Put debugging code here to determine why.
+				MonitorActivity.this.runOnUiThread(new Runnable() {
+					@Override
+					public void run() {
+						final TextView statusText = (TextView) findViewById(R.id.textStatus);
+						statusText.setText(R.string.waitingForParent);
 
-                Log.e(TAG, "Unregistration failed: " + errorCode);
-            }
-        };
+						final TextView serviceText = (TextView) findViewById(R.id.textService);
+						serviceText.setText(serviceName);
 
-        _nsdManager.registerService(
-                serviceInfo, NsdManager.PROTOCOL_DNS_SD, _registrationListener);
-    }
+						final TextView portText = (TextView) findViewById(R.id.port);
+						portText.setText(Integer.toString(port));
+					}
+				});
+			}
 
-    /**
-     * Uhregistered the service and assigns the listener
-     * to null.
-     */
-    private void unregisterService()
-    {
-        if(_registrationListener != null)
-        {
-            Log.i(TAG, "Unregistering monitoring service");
+			@Override
+			public void onRegistrationFailed(NsdServiceInfo serviceInfo,
+					int errorCode) {
+				// Registration failed! Put debugging code here to determine
+				// why.
+				Log.e(TAG, "Registration failed: " + errorCode);
+			}
 
-            _nsdManager.unregisterService(_registrationListener);
-            _registrationListener = null;
-        }
-    }
+			@Override
+			public void onServiceUnregistered(NsdServiceInfo arg0) {
+				// Service has been unregistered. This only happens when you
+				// call
+				// NsdManager.unregisterService() and pass in this listener.
+
+				Log.i(TAG, "Unregistering service");
+			}
+
+			@Override
+			public void onUnregistrationFailed(NsdServiceInfo serviceInfo,
+					int errorCode) {
+				// Unregistration failed. Put debugging code here to determine
+				// why.
+
+				Log.e(TAG, "Unregistration failed: " + errorCode);
+			}
+		};
+
+		_nsdManager.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD,
+				_registrationListener);
+	}
+
+	/**
+	 * Uhregistered the service and assigns the listener to null.
+	 */
+	private void unregisterService() {
+		if (_registrationListener != null) {
+			Log.i(TAG, "Unregistering monitoring service");
+
+			_nsdManager.unregisterService(_registrationListener);
+			_registrationListener = null;
+		}
+	}
 }
