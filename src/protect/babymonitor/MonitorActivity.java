@@ -20,6 +20,19 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.security.AlgorithmParameters;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.security.spec.InvalidKeySpecException;
+import java.security.spec.KeySpec;
+
+import javax.crypto.Cipher;
+import javax.crypto.CipherOutputStream;
+import javax.crypto.NoSuchPaddingException;
+import javax.crypto.SecretKey;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.PBEKeySpec;
+import javax.crypto.spec.SecretKeySpec;
 
 import android.app.Activity;
 import android.content.Context;
@@ -79,7 +92,25 @@ public class MonitorActivity extends Activity {
 			audioRecord.startRecording();
 
 //			socket.setKeepAlive(true);
-			final OutputStream out = socket.getOutputStream();
+			
+			   final OutputStream out = socket.getOutputStream();
+
+
+	            /* Derive the key, given password and salt. */
+	            SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA1And8bit");
+	            KeySpec spec = new PBEKeySpec("password".toCharArray(), "salt".getBytes(), 65536, 256);
+	            SecretKey tmp = factory.generateSecret(spec);
+	            SecretKey secret = new SecretKeySpec(tmp.getEncoded(), "AES");
+	/* Encrypt the message. */
+	            Cipher encipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+
+
+	                encipher.init(Cipher.ENCRYPT_MODE, secret);
+	            AlgorithmParameters params = encipher.getParameters();
+
+			
+			
+	            CipherOutputStream cos = new CipherOutputStream(out, encipher);
 
 			socket.setSendBufferSize(byteBufferSize);
 			Log.d(TAG, "Socket send buffer size: " + socket.getSendBufferSize());
@@ -95,7 +126,9 @@ public class MonitorActivity extends Activity {
 					//create a timeout in the searchTrheshold check.
 					try {
 						 byte[] byteBuffer =ShortToByte(buffer2,read);
-						 out.write(byteBuffer);
+//						 out.write(byteBuffer);
+			                cos.write(byteBuffer);
+
 //						out.write(buffer, 0, read);
 					} catch (IOException e) {
 						e.printStackTrace();
@@ -105,11 +138,21 @@ public class MonitorActivity extends Activity {
 					if(lastHeartBeat + heartbeatTimeout - 1000 < System.currentTimeMillis()) {
 						//send heartbeat
 						lastHeartBeat = System.currentTimeMillis();
-						out.write("beat".getBytes());
+//						out.write("beat".getBytes());
+		                cos.write("beat".getBytes());
+
 					}
 				}
 
 			}
+		} catch (NoSuchAlgorithmException e1) {
+			e1.printStackTrace();
+		} catch (InvalidKeyException e1) {
+			e1.printStackTrace();
+		} catch (InvalidKeySpecException e1) {
+			e1.printStackTrace();
+		} catch (NoSuchPaddingException e1) {
+			e1.printStackTrace();
 		} finally {
 			audioRecord.stop();
 		}

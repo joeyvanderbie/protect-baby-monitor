@@ -21,6 +21,22 @@ import java.io.InputStream;
 import java.net.Socket;
 import java.net.SocketException;
 import java.net.UnknownHostException;
+import java.security.AlgorithmParameters;
+import java.security.InvalidAlgorithmParameterException;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.security.spec.InvalidKeySpecException;
+import java.security.spec.InvalidParameterSpecException;
+import java.security.spec.KeySpec;
+
+import javax.crypto.Cipher;
+import javax.crypto.CipherInputStream;
+import javax.crypto.NoSuchPaddingException;
+import javax.crypto.SecretKey;
+import javax.crypto.SecretKeyFactory;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.PBEKeySpec;
+import javax.crypto.spec.SecretKeySpec;
 
 import android.app.Activity;
 import android.media.AudioFormat;
@@ -72,12 +88,30 @@ public class ListenActivity extends Activity
 
         try
         {
-            final byte [] buffer = new byte[byteBufferSize];
+        	/* Derive the key, given password and salt. */
+            SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA1And8bit");
+            KeySpec spec = new PBEKeySpec("password".toCharArray(), "salt".getBytes(), 65536, 256);
+            SecretKey tmp = factory.generateSecret(spec);
+            SecretKey secret = new SecretKeySpec(tmp.getEncoded(), "AES");
+
+            /* Encrypt the message. */
+            Cipher cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cipher.init(Cipher.ENCRYPT_MODE, secret);
+            AlgorithmParameters params = cipher.getParameters();
+            byte[] iv = params.getParameterSpec(IvParameterSpec.class).getIV();
+
+            /* Decrypt the message, given derived key and initialization vector. */
+            Cipher decipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            decipher.init(Cipher.DECRYPT_MODE, secret, new IvParameterSpec(iv));
+            CipherInputStream cis = new CipherInputStream(is, decipher);
+            
+        	final byte [] buffer = new byte[byteBufferSize];
 
             while(socket.isConnected() && read != -1 && Thread.currentThread().isInterrupted() == false)
             {
-            	read = is.read(buffer);
-            	
+//            	read = is.read(buffer);
+                read = cis.read(buffer);
+
                 if(read > 0)
                 {
                     audioTrack.write(buffer, 0, read);
@@ -89,7 +123,19 @@ public class ListenActivity extends Activity
         	//To-do: ping remote
         	//otherwise throw exception
         	throw ste;
-        }
+        } catch (NoSuchAlgorithmException e) {
+			e.printStackTrace();
+		} catch (NoSuchPaddingException e) {
+			e.printStackTrace();
+		} catch (InvalidKeyException e) {
+			e.printStackTrace();
+		} catch (InvalidParameterSpecException e) {
+			e.printStackTrace();
+		} catch (InvalidAlgorithmParameterException e) {
+			e.printStackTrace();
+		} catch (InvalidKeySpecException e) {
+			e.printStackTrace();
+		}
         finally
         {
             audioTrack.stop();
