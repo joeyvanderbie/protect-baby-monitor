@@ -23,6 +23,7 @@ import java.net.Socket;
 import java.security.AlgorithmParameters;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.KeySpec;
 
@@ -36,7 +37,6 @@ import javax.crypto.spec.SecretKeySpec;
 
 import protect.babymonitor.PromptDialog.PromptDialogListener;
 import android.app.Activity;
-import android.app.FragmentManager;
 import android.content.Context;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
@@ -47,6 +47,7 @@ import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
 import android.os.Bundle;
 import android.text.format.Formatter;
+import android.util.Base64;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -61,7 +62,7 @@ public class MonitorActivity extends Activity implements PromptDialogListener{
 	private int heartbeatTimeout = 10000;
 	private long lastHeartBeat = 0;
 	String password = "";
-	String salt = "salt";
+	byte[] salt ;
 	
 	NsdManager _nsdManager;
 
@@ -101,7 +102,7 @@ public class MonitorActivity extends Activity implements PromptDialogListener{
 
 	            /* Derive the key, given password and salt. */
 	            SecretKeyFactory factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA1And8bit");
-	            KeySpec spec = new PBEKeySpec(password.toCharArray(), salt.getBytes(), 65536, 256);
+	            KeySpec spec = new PBEKeySpec(password.toCharArray(), salt, 65536, 256);
 	            SecretKey tmp = factory.generateSecret(spec);
 	            SecretKey secret = new SecretKeySpec(tmp.getEncoded(), "AES");
 	/* Encrypt the message. */
@@ -222,12 +223,24 @@ public class MonitorActivity extends Activity implements PromptDialogListener{
 			}
 		});
 		
-		FragmentManager fm = getFragmentManager();
-		PromptDialog dialogFragment = new PromptDialog ();
-		dialogFragment.setPromptDialogListener(this);
-		dialogFragment.show(fm, "Sample Fragment");
+//		FragmentManager fm = getFragmentManager();
+//		PromptDialog dialogFragment = new PromptDialog ();
+//		dialogFragment.setPromptDialogListener(this);
+//		dialogFragment.show(fm, "Sample Fragment");
 		
+		password = Util.generatePassword(20);
+		Log.d(TAG, "password: "+password);
+
+
+		final SecureRandom r = new SecureRandom();
+		salt = new byte[32];
+		r.nextBytes(salt);
+		String encodedSalt = Base64.encodeToString(salt, Base64.DEFAULT);
+		Log.d(TAG, "salt: "+encodedSalt);
+
 		
+		initializeServer();
+		updateScreen();
 	}
 
 	@Override
@@ -343,6 +356,12 @@ public class MonitorActivity extends Activity implements PromptDialogListener{
 	public void onFinishPromptDialog(String inputText) {
 		password = inputText;
 		
+		initializeServer();
+		updateScreen();
+
+	}
+	
+	private void initializeServer() {
 		_serviceThread = new Thread(new Runnable() {
 			@Override
 			public void run() {
@@ -395,7 +414,9 @@ public class MonitorActivity extends Activity implements PromptDialogListener{
 			}
 		});
 		_serviceThread.start();
-
+	}
+	
+	private void updateScreen() {
 		MonitorActivity.this.runOnUiThread(new Runnable() {
 			@Override
 			public void run() {
