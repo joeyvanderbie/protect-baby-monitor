@@ -36,8 +36,10 @@ import javax.crypto.spec.PBEKeySpec;
 import javax.crypto.spec.SecretKeySpec;
 
 import protect.babymonitor.PromptDialog.PromptDialogListener;
+import zxing.Contents;
 import android.app.Activity;
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.MediaRecorder;
@@ -51,9 +53,13 @@ import android.util.Base64;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.widget.ImageView;
 import android.widget.SeekBar;
 import android.widget.SeekBar.OnSeekBarChangeListener;
 import android.widget.TextView;
+
+import com.google.zxing.BarcodeFormat;
+import com.google.zxing.WriterException;
 
 public class MonitorActivity extends Activity implements PromptDialogListener{
 	final String TAG = "BabyMonitor";
@@ -417,9 +423,30 @@ public class MonitorActivity extends Activity implements PromptDialogListener{
 	}
 	
 	private void updateScreen() {
+		
+		//TO-DO: generate QR code for listenAcitivity using QZING lib
+		
 		MonitorActivity.this.runOnUiThread(new Runnable() {
 			@Override
 			public void run() {
+				
+				// ImageView to display the QR code in.  This should be defined in 
+				// your Activity's XML layout file
+				final ImageView imageView = (ImageView) findViewById(R.id.qrCode);
+
+				String qrData = "Data I want to encode in QR code";
+				int qrCodeDimention = 500;
+
+				QRCodeEncoder qrCodeEncoder = new QRCodeEncoder(qrData, null,
+				        Contents.Type.TEXT, BarcodeFormat.QR_CODE.toString(), qrCodeDimention);
+
+				try {
+				    Bitmap bitmap = qrCodeEncoder.encodeAsBitmap();
+				    imageView.setImageBitmap(bitmap);
+				} catch (WriterException e) {
+				    e.printStackTrace();
+				}
+				
 				final TextView addressText = (TextView) findViewById(R.id.address);
 
 				final WifiManager wifiManager = (WifiManager) getSystemService(WIFI_SERVICE);
@@ -435,4 +462,5 @@ public class MonitorActivity extends Activity implements PromptDialogListener{
 			}
 		});
 	}
+	
 }
